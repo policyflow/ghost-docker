@@ -15,6 +15,7 @@ services:
       - ./caddy:/etc/caddy
       - caddy_data:/data
       - caddy_config:/config
+      - /var/www/static:/srv/static:ro
     depends_on:
       - ghost
     networks:
@@ -24,6 +25,8 @@ services:
     # Do not alter this without updating the Tinybird Sync container as well
     image: ghost:${GHOST_VERSION:-6-alpine}
     restart: always
+    expose:
+      - "127.0.0.1:${GHOST_PORT:-2368}:2368"
     # This is required to import current config when migrating
     env_file:
       - .env
@@ -58,6 +61,34 @@ services:
     networks:
       - ghost_network
 
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --tcp-backlog 128
+      --timeout 300
+      --tcp-keepalive 60
+      --databases 1
+      --hz 10
+      --loglevel warning
+      --client-output-buffer-limit "normal 0 0 0"
+      --stop-writes-on-bgsave-error no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 1s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ghost_network
+
+    #volumes:
+      # Optional: Enable Redis persistence if needed
+      # - redis-data:/data
+
   db:
     image: mysql:8.0.44@sha256:f37951fc3753a6a22d6c7bf6978c5e5fefcf6f31814d98c582524f98eae52b21
     restart: always
@@ -82,7 +113,7 @@ services:
       - ghost_network
 
   traffic-analytics:
-    image: ghost/traffic-analytics:1.0.40@sha256:f26aa57d6223281e1c009626f48c7bee21afe3dc606136e6a4fe3efc042e7baf
+    image: ghost/traffic-analytics:1.0.20@sha256:a72573d89457e778b00e9061422516d2d266d79a72a0fc02005ba6466e391859
     restart: always
     expose:
       - "3000"
@@ -109,6 +140,7 @@ services:
     environment:
       # See https://github.com/TryGhost/ActivityPub/blob/main/docs/env-vars.md
       NODE_ENV: production
+      ACTIVITYPUB_COLLECTION_PAGE_SIZE: 20
       MYSQL_HOST: db
       MYSQL_USER: ${DATABASE_USER:-ghost}
       MYSQL_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD environment variable is required}
@@ -124,7 +156,7 @@ services:
     networks:
       - ghost_network
 
-  # Supporting Services
+  # Suporting Services
 
   tinybird-login:
     build:
@@ -192,6 +224,8 @@ services:
       - ghost_network
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     profiles: [activitypub]
     restart: no
