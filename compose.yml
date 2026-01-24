@@ -15,6 +15,7 @@ services:
       - ./caddy:/etc/caddy
       - caddy_data:/data
       - caddy_config:/config
+      - /var/www/static:/srv/static:ro
     depends_on:
       - ghost
     networks:
@@ -24,6 +25,8 @@ services:
     # Do not alter this without updating the Tinybird Sync container as well
     image: ghost:${GHOST_VERSION:-6-alpine}
     restart: always
+    expose:
+      - "127.0.0.1:${GHOST_PORT:-2368}:2368"
     # This is required to import current config when migrating
     env_file:
       - .env
@@ -57,6 +60,34 @@ services:
         required: false
     networks:
       - ghost_network
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --tcp-backlog 128
+      --timeout 300
+      --tcp-keepalive 60
+      --databases 1
+      --hz 10
+      --loglevel warning
+      --client-output-buffer-limit "normal 0 0 0"
+      --stop-writes-on-bgsave-error no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 1s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ghost_network
+
+    #volumes:
+      # Optional: Enable Redis persistence if needed
+      # - redis-data:/data
 
   db:
     image: mysql:8.0.44@sha256:f37951fc3753a6a22d6c7bf6978c5e5fefcf6f31814d98c582524f98eae52b21
@@ -109,6 +140,7 @@ services:
     environment:
       # See https://github.com/TryGhost/ActivityPub/blob/main/docs/env-vars.md
       NODE_ENV: production
+      ACTIVITYPUB_COLLECTION_PAGE_SIZE: 20
       MYSQL_HOST: db
       MYSQL_USER: ${DATABASE_USER:-ghost}
       MYSQL_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD environment variable is required}
@@ -192,6 +224,8 @@ services:
       - ghost_network
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     profiles: [activitypub]
     restart: no
